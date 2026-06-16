@@ -5,7 +5,7 @@ set -euo pipefail
 # Variables configurables
 # ============================================================
 FLENT_SERVER="${FLENT_SERVER:-10.64.21.21}"
-DURATION="${DURATION:-120}"
+DURATION="${DURATION:-20}"
 
 # ============================================================
 # Firmwares y radios a testear
@@ -17,12 +17,13 @@ RADIOS=("24g" "5g")
 # Tests de flent a ejecutar por combinación
 # Cada elemento: "test_name arg1=val1 arg2=val2 ..."
 # ============================================================
+
+# para anova usaremos rrul_be
 TESTS=(
-  "rrul_be"
-  "rrul_be_nflows upload_streams=10 download_streams=10"
+  "rrul_be_nflows upload_streams=1 download_streams=1"
+  "rrul_be_nflows upload_streams=50 download_streams=50"
   "rrul_be_nflows upload_streams=100 download_streams=100"
-  "rrul_be_nflows upload_streams=1000 download_streams=1000"
-  "rtt_fair_var_mixed"
+  "rrul_be_nflows upload_streams=150 download_streams=150"
 )
 
 # ============================================================
@@ -32,6 +33,7 @@ FILTER_FW=""
 FILTER_RADIO=""
 FILTER_TESTS=()
 SUFFIX=""
+REPEAT=1
 
 usage() {
   echo "Uso: $0 [-f <firmware>] [-r <radio>] [-t <test>] [-s <suffix>] [-h]"
@@ -40,6 +42,7 @@ usage() {
   echo "  -f <firmware>   Ejecutar solo este firmware (por ej. cudystock)"
   echo "  -r <radio>      Ejecutar solo esta banda (por ej. 5g)"
   echo "  -t <test>       Ejecutar solo este test (repetible, por ej. rrul_be)"
+  echo "  -n <N>          Repetir cada test N veces (por defecto 1)"
   echo "  -s <suffix>     Sufijo opcional para añadir al título de cada test"
   echo "  -h              Muestra esta ayuda y sale"
   echo ""
@@ -59,6 +62,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -t|--test)
       FILTER_TESTS+=("$2")
+      shift 2
+      ;;
+    -n|--repeat)
+      REPEAT="$2"
       shift 2
       ;;
     -s|--suffix)
@@ -99,6 +106,7 @@ run_flent() {
   local radio="$2"
   local test_name="$3"
   local params="$4"
+  local run_num="${5:-}"
   local tag="${fw}-${radio}"
 
   local cmd=("flent" "$test_name" "-l" "$DURATION" "-H" "$FLENT_SERVER")
@@ -130,6 +138,11 @@ run_flent() {
     title="${title}-${SUFFIX}"
   fi
 
+  # Añadir número de repetición si corresponde
+  if [[ "$REPEAT" -gt 1 && -n "$run_num" ]]; then
+    title="${title}-run${run_num}"
+  fi
+
   cmd+=("-t" "$title")
 
   echo ""
@@ -157,14 +170,18 @@ for fw in "${FIRMWARES[@]}"; do
     echo "  Configura el router con estos parámetros manualmente"
     echo "======================================================"
 
-    while true; do
-      echo "  Escribe 'done' y presiona ENTER cuando esté listo:"
-      read -r input
-      if [[ "$input" == "done" ]]; then
-        break
-      fi
-      echo "  Entrada inválida. Debes escribir 'done' exactamente."
-    done
+    if [[ -z "$FILTER_FW" || -z "$FILTER_RADIO" ]]; then
+      while true; do
+        echo "  Escribe 'done' y presiona ENTER cuando esté listo:"
+        read -r input
+        if [[ "$input" == "done" ]]; then
+          break
+        fi
+        echo "  Entrada inválida. Debes escribir 'done' exactamente."
+      done
+    else
+      echo "  (Omitiendo confirmación: firmware y banda especificados)"
+    fi
 
     for test_spec in "${TESTS[@]}"; do
       # Separar nombre del test del resto de argumentos
@@ -177,7 +194,10 @@ for fw in "${FIRMWARES[@]}"; do
       # Saltar si no corresponde al filtro de tests
       should_run_test "$test_name" || continue
 
-      run_flent "$fw" "$radio" "$test_name" "$params"
+      for ((run=1; run<=REPEAT; run++)); do
+        run_flent "$fw" "$radio" "$test_name" "$params" "$run"
+        sleep 10
+      done
     done
 
   done
